@@ -75,6 +75,11 @@ library("ggvenn")
 library("RColorBrewer")
 library("data.table")
 library("psych")
+library("microeco")
+library("meconetcomp")
+library("magrittr")
+library("igraph")
+library("file2meco")
 ```
 
 ### Load and clean data
@@ -247,12 +252,139 @@ taxa_plot <- ggplot(dat, aes(x = as.factor(Soil), y = cs, fill = Genus)) +
   labs(y = "relative abundance", x="")
 ```
 
-```r
+### Random forest
 
+```r
+predictors <- t(otu_table(ps))
+dim(predictors)
+response <- as.factor(sample_data(ps)$Soil)
+rf.data <- data.frame(response, predictors)
+
+set.seed(100)
+classify <- randomForest(response~., data = rf.data, ntree = 100)
+print(classify)
+
+imp <- importance(classify)
+imp <- data.frame(predictors = rownames(imp), imp)
+taxt <- tax_table(ps) %>% as.data.frame() %>% tibble::rownames_to_column("ASV") %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom))
+imp <- merge(imp, taxt, by.x = "predictors", by.y = "ASV")
+imp.sort <- arrange(imp, desc(MeanDecreaseGini))
+imp.sort$predictors <- factor(imp.sort$predictors, levels = imp.sort$predictors)
+imp.20 <- imp.sort[1:20, ]
+mlp <- ggplot(imp.20, aes(x = predictors, y = MeanDecreaseGini)) +
+  theme_classic() +
+  geom_point(size = 3) +
+  scale_x_discrete(labels= imp.20$identification) +
+  theme(panel.grid.major.y = element_line(color = "grey",
+                                          size = 0.5,
+                                          linetype = 2)) +
+  xlab(" ") + ylab("Mean Decrease in Gini coefficient") +
+  coord_flip()
 ```
 
-```r
+### Network analysis
 
+```r
+soil_amp <- phyloseq2meco(ps)
+
+soil_amp_network <- list()
+tmp <- clone(soil_amp)
+tmp$sample_table %<>% subset(Soil == "Agricultural")
+tmp$tidy_dataset()
+tmp <- trans_network$new(dataset = tmp, cor_method = "spearman", filter_thres = 0.0005)
+tmp$cal_network(COR_p_thres = 0.01, COR_cut = 0.6)
+soil_amp_network$Agricultural <- tmp
+
+tmp <- clone(soil_amp)
+tmp$sample_table %<>% subset(Soil == "Margin")
+tmp$tidy_dataset()
+tmp <- trans_network$new(dataset = tmp, cor_method = "spearman", filter_thres = 0.0005)
+tmp$cal_network(COR_p_thres = 0.01, COR_cut = 0.6)
+soil_amp_network$Margin <- tmp
+
+tmp <- clone(soil_amp)
+tmp$sample_table %<>% subset(Soil == "Uncultivated")
+tmp$tidy_dataset()
+tmp <- trans_network$new(dataset = tmp, cor_method = "spearman", filter_thres = 0.0005)
+tmp$cal_network(COR_p_thres = 0.01, COR_cut = 0.6)
+soil_amp_network$Uncultivated <- tmp
+
+soil_amp_network %<>% cal_module(undirected_method = "cluster_fast_greedy")
+
+tmp <- cal_network_attr(soil_amp_network)
+
+soil_amp_network %<>% get_node_table(node_roles = TRUE) %>% get_edge_table
+
+tmp <- robustness$new(soil_amp_network, remove_strategy = c("edge_rand", "edge_strong", "node_rand", "node_degree_high"),
+                      remove_ratio = seq(0, 0.99, 0.1), measure = c("Eff", "Eigen", "Pcr"), run = 10)
+tmp$plot(linewidth = 1)
+
+plot.net.fun <- function(rm.strat, measure.var, ylab, xlab, lmTF){
+  tmp1 <- tmp$res_table %>% .[.$remove_strategy == rm.strat & .$measure == measure.var, ]
+  t1 <- trans_env$new(dataset = NULL, add_data = tmp1)
+  t1$dataset$sample_table <- t1$data_env
+  net.met.df <- t1$dataset$sample_table
+  p <- ggplot(net.met.df, aes(x=remove_ratio, y=value, color = Network)) + 
+    geom_point(size = 3, alpha = 0.5) +
+    {if(lmTF == T)geom_smooth(method=lm)}+
+    {if(lmTF == F)geom_path()} +
+    theme_classic() +
+    theme(legend.title=element_blank()) +
+    xlab(xlab) + 
+    ylab(ylab) +
+    scale_color_manual(name = "Legend", values=c("#e41a1c", "#377eb8", "#4daf4a"),
+                      labels = c("Agricultural", "Margin", "Uncultivated"),
+                      breaks = c("Agricultural", "Margin", "Uncultivated")) 
+  return(p)
+}
+
+p1 <- plot.net.fun("edge_rand", "Eigen", "Network connectivity", "Ratio of randomly removed edges", T)
+p2 <- plot.net.fun("edge_strong", "Eigen", "Network connectivity", "Ratio of edges removed in decreasing weight", F)
+p3 <- plot.net.fun("node_rand", "Eigen", "Network connectivity", "Ratio of randomly removed nodes", T)
+p4 <- plot.net.fun("node_degree_high", "Eigen", "Network connectivity", "Ratio of nodes removed in decreasing degree", F)
+
+hdn_agr <- soil_amp_network$Agricultural$res_node_table %>% as_tibble() %>%
+  slice_max(order_by = degree, n = round(nrow(.) * 0.25)) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Agricultural")
+
+hdn_mar <- soil_amp_network$Margin$res_node_table %>% as_tibble() %>%
+  slice_max(order_by = degree, n = round(nrow(.) * 0.25)) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Margin")
+
+hdn_unc <- soil_amp_network$Uncultivated$res_node_table %>% as_tibble() %>%
+  slice_max(order_by = degree, n = round(nrow(.) * 0.25)) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Uncultivated")
+
+hdn.df <- rbind(hdn_agr, hdn_mar, hdn_unc)
+
+nb.cols <- length(unique(hdn.df$identification))
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
+
+pxx <- ggplot(data=hdn.df, 
+             aes(x = factor(1), fill = identification)) +
+        facet_wrap(vars(soil), nrow = 3, scale='free_y') + 
+        theme_void() +
+        geom_bar(stat = "count") +
+        coord_polar(theta='y') +
+        scale_fill_manual(values = mycolors) +
+        theme(axis.text.y = element_blank(), 
+              axis.title.y = element_blank(), 
+              axis.ticks.y = element_blank(),
+              axis.title.x = element_blank(),
+              strip.text = element_blank(),
+              legend.position='right',
+              legend.title=element_blank())
 ```
 
 ```r
