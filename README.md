@@ -80,6 +80,9 @@ library("meconetcomp")
 library("magrittr")
 library("igraph")
 library("file2meco")
+library("tyRa")
+library("minpack.lm")
+library("Hmisc")
 ```
 
 ### Load and clean data
@@ -387,26 +390,204 @@ pxx <- ggplot(data=hdn.df,
               legend.title=element_blank())
 ```
 
-```r
+### Network visualization
 
+```r
+image.net.fun <- function(group, lab){
+  soil_amp_network <- list()
+  tmp <- clone(soil_amp)
+  tmp$sample_table %<>% subset(Soil == group)
+  tmp$tidy_dataset()
+  
+  
+  taxt <- tax_table(ps) %>% as.data.frame() %>%
+    mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+    mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom))
+  
+  totu <- t(tmp$otu_table)
+  c_net_calculate(totu, method = "spearman") -> corr
+  c_net_build(corr, r_thres = 0.6, p_thres = 0.05, delete_single = T) -> co_net
+  co_net1 <- c_net_set(co_net, taxt["identification"])
+  c_net_layout(co_net1, method = nicely()) -> coors
+  pdf(paste0("figures/", lab, "_network.pdf"))
+  c_net_plot(co_net1, coors, labels_num = 0, legend = F, edge.color = "black",
+             vertex.size = 5, vertex.color = "lightgray", main = " ", seed = 100)
+  dev.off()
+}
+
+image.net.fun("Agricultural", "agr")
+image.net.fun("Margin", "mar")
+image.net.fun("Uncultivated", "unc")
 ```
 
-```r
+### LEfSe
 
+```r
+soil_amp <- phyloseq2meco(ps)
+t1 <- trans_diff$new(dataset = soil_amp, method = "lefse", group = "Soil", alpha = 0.001, lefse_subgroup = NULL, taxa_level = "ASV")
+lefse.df <- t1$res_diff
+
+lefse.df <- lefse.df %>%
+  separate(Taxa, into = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV"), 
+           sep = "\\|", fill = "right", extra = "drop") %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom))
+
+lfsgr <- ggplot(lefse.df, aes(x = fct_reorder(ASV, Group, .desc = TRUE), y = LDA, fill = Group)) +
+  theme_classic() +
+  geom_bar(stat = "identity") +
+  
+  scale_x_discrete(labels= lefse.df$identification) +
+  xlab(" ") + ylab("LDA score") +
+  scale_fill_manual(name = "Legend", values=c("#e41a1c", "#377eb8", "#4daf4a"),
+                     labels = c("Agricultural", "Margin", "Uncultivated"),
+                     breaks = c("Agricultural", "Margin", "Uncultivated")) +
+  coord_flip()
 ```
 
-```r
+### Sloan null model
 
+```r
+ks.tmp <- sample_data(ps) %>% as_tibble()
+sample_data(ps)$group <- paste0(ks.tmp$Soil,"-",ks.tmp$Block)
+list.gm <- unique(sample_data(ps)$group)
+
+sncm.calc <- function(x){
+  ks <- sample_data(ps)[["Soil"]] %in% x
+  ps <- prune_samples(samples = ks, ps)
+  spp.out <- tyRa::fit_sncm(spp = t(otu_table(ps))@.Data, pool=NULL, taxon=data.frame(tax_table(ps)))
+  return(spp.out)}
+
+sncm.results.agr <- sncm.calc("Agricultural")
+plot_sncm.agr <- plot_sncm_fit(spp_out = sncm.results.agr) +
+  theme_bw(base_size = 15) +
+  theme(legend.justification=c(0.01,0.99), legend.position=c(0.01,0.99), legend.title=element_blank())
+plot_sncm.agr$layers[[6]] <- NULL
+plot_sncm.agr$layers[[5]] <- NULL
+sncm.results.agr <- sncm.results.agr$predictions %>% 
+  filter(fit_class != "As predicted") %>%
+  tibble::rownames_to_column("ASV")
+sncm.results.agr %>% filter(ASV %in% hdn_agr$name)
+
+sncm.results.mar <- sncm.calc("Margin")
+plot_sncm.mar <- plot_sncm_fit(spp_out = sncm.results.mar) +
+  theme_bw(base_size = 15) +
+  theme(legend.justification=c(0.01,0.99), legend.position=c(0.01,0.99), legend.title=element_blank())
+plot_sncm.mar$layers[[6]] <- NULL
+plot_sncm.mar$layers[[5]] <- NULL
+sncm.results.mar <- sncm.results.mar$predictions %>% 
+  filter(fit_class != "As predicted") %>%
+  tibble::rownames_to_column("ASV")
+sncm.results.mar %>% filter(ASV %in% hdn_mar$name)
+
+sncm.results.unc <- sncm.calc("Uncultivated")
+plot_sncm.unc <- plot_sncm_fit(spp_out = sncm.results.unc) +
+  theme_bw(base_size = 15) +
+  theme(legend.justification=c(0.01,0.99), legend.position=c(0.01,0.99), legend.title=element_blank())
+plot_sncm.unc$layers[[6]] <- NULL
+plot_sncm.unc$layers[[5]] <- NULL
+sncm.results.unc <- sncm.results.unc$predictions %>% 
+  filter(fit_class != "As predicted") %>%
+  tibble::rownames_to_column("ASV")
+sncm.results.unc %>% filter(ASV %in% hdn_unc$name)
+
+ggvenn(list(agr = sncm.results.agr$ASV,
+            mar = sncm.results.mar$ASV,
+            unc = sncm.results.unc$ASV))
+
+sncm.results.unc %>% filter(ASV %in% sncm.results.agr$ASV) %>%
+  filter(ASV %in% sncm.results.mar$ASV)
+
+sncm.results.agr %>% filter(!ASV %in% sncm.results.unc$ASV) %>%
+  filter(!ASV %in% sncm.results.mar$ASV) %>% filter(ASV %in% hdn_agr$name)
+
+sncm.results.mar %>% filter(!ASV %in% sncm.results.unc$ASV) %>%
+  filter(!ASV %in% sncm.results.agr$ASV) %>% filter(ASV %in% hdn_mar$name)
+
+sncm.results.unc %>% filter(!ASV %in% sncm.results.agr$ASV) %>%
+  filter(!ASV %in% sncm.results.mar$ASV)  %>% filter(ASV %in% hdn_unc$name)
+
+ggvenn(list(agr_sncm = sncm.results.agr$ASV,
+            agr_hdn = hdn_agr$name))
+
+ggvenn(list(mar_sncm = sncm.results.mar$ASV,
+            mar_hdn = hdn_mar$name))
+
+ggvenn(list(unc_sncm = sncm.results.unc$ASV,
+            unc_hdn = hdn_unc$name))
+
+com.a <- sncm.results.agr %>% filter(ASV %in% hdn_agr$name) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Agricultural")
+
+com.b <- sncm.results.mar %>% filter(ASV %in% hdn_mar$name) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Margin")
+
+com.c <- sncm.results.unc %>% filter(ASV %in% hdn_unc$name) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("k__", "p__", "c__", "o__", "f__", "g__", "s__"), "", .))) %>%
+  mutate(across(everything(), ~ ifelse(str_trim(.) == "", NA, .))) %>%
+  mutate(identification = coalesce(Genus, Family, Order, Class, Phylum, Kingdom)) %>%
+  mutate(soil = "Uncultivated")
+
+hdn.df <- rbind(com.a, com.b, com.c)
+
+nb.cols <- length(unique(hdn.df$identification))
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
+
+pxx <- ggplot(data=hdn.df, 
+              aes(x = factor(1), fill = identification)) +
+  facet_wrap(vars(soil), scale='free_y') + 
+  theme_void() +
+  geom_bar(stat = "count") +
+  coord_polar(theta='y') +
+  scale_fill_manual(values = mycolors) +
+  theme(axis.text.y = element_blank(), 
+        axis.title.y = element_blank(), 
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        strip.text = element_blank(),
+        legend.title=element_blank())
 ```
 
-```r
-
-```
+### iCAMP
 
 ```r
+preabs <- as.data.frame(t(otu_table(ps)))
+phy <- phy_tree(ps)
+sss <- icamp.big(preabs, phy, nworker = 8)
+df <- sss$detail$processes$CbMPDiCBraya %>%
+  select(-sample2) %>%
+  group_by(sample1) %>%
+  summarise(across(everything(), mean))
 
-```
+ks.tmp <- as.matrix(sample_data(ps)) %>% as.data.frame()
+ks.tmp <- ks.tmp %>% rownames_to_column("sample")
+df.2 <- merge(df, ks.tmp, by.x = "sample1", by.y = "sample") %>%
+  group_by(Soil) %>%
+  summarise(across(everything(), mean)) %>%
+  select(1,3:7) %>%
+  reshape2::melt()
 
-```r
-
+taxa_plot <- ggplot(df.2, aes(x = as.factor(Soil), y = value, fill = variable)) +
+  theme_bw(base_size = 22) +
+  geom_bar(stat="identity") +
+  theme(legend.background = element_rect(fill="white"),
+        legend.key = element_rect(fill="transparent"),
+        legend.title=element_blank(), 
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(color="black"),
+        axis.text.y = element_text(color="black"),
+        panel.grid = element_blank()) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "relative contribution", x="") +
+  coord_flip() +
+  scale_fill_manual(name = "Legend", values=c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e"),
+                    breaks = c("Heterogeneous.Selection", "Homogeneous.Selection", "Dispersal.Limitation", "Homogenizing.Dispersal", "Drift.and.Others"),
+                    labels = c("Heterog. selection", "Homog. selection", "Dispersal limitation", "Homog. dispersal", "Drift + others"))
 ```
