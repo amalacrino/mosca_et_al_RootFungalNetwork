@@ -56,6 +56,225 @@ Build a phyloseq object
 ### Load libraries
 
 ```r
+library("tidyverse")
+library("phyloseq")
+library("DESeq2")
+library("ggrepel")
+library("emmeans")
+library("car")
+library("lme4")
+library("microbiome")
+library("ggvenn")
+library("decontam")
+library("Wrench")
+library("RVAideMemoire")
+library("picante")
+library("decontam")
+library("reshape2")
+library("ggvenn")
+library("RColorBrewer")
+library("data.table")
+library("psych")
+```
+
+### Load and clean data
+
+```r
+load(file = 'data/data.rds')
+
+remove.cont <- function(ps){
+  sample_data(ps)$is.neg <- sample_data(ps)$Treatment == "DNA_extraction"
+  contamdf.prev <- isContaminant(ps, method="prevalence", neg="is.neg", threshold = 0.05)
+  cont.remove <- subset(contamdf.prev, contaminant == "TRUE")
+  cont.remove <- row.names(cont.remove)
+  allTaxa <- taxa_names(ps)
+  allTaxa <- allTaxa[!(allTaxa %in% cont.remove)]
+  ps <- prune_taxa(allTaxa, ps)
+  return(ps)
+}
+
+ps <- remove.cont(ps)
+ps <- filter_taxa(ps, function (x) {sum(x > 0) > 1}, prune=TRUE)
+ps <- prune_samples(sample_sums(ps) >= 1000, ps)
+
+wrench.norm.ps <- function(ps){
+  count_tab <- as.matrix(data.frame(otu_table(ps)))
+  group <- paste0(sample_data(ps)$Compartment)
+  W <- wrench(count_tab, condition=group)
+  norm_factors <- W$nf
+  norm_counts <- sweep(count_tab, 2, norm_factors, FUN = '/')
+  norm_counts_trim <- data.frame(t(data.frame(norm_counts)))
+  #norm_counts_trim[] <- lapply(norm_counts_trim, function(x) DescTools::Winsorize(x, probs = c(0, 0.97), type = 1))
+  norm_counts_trim <- data.frame(t(norm_counts_trim))
+  norm_counts_trim[norm_counts_trim == 0] <- 1
+  norm_counts_trim[norm_counts_trim < 0] <- 1
+  norm_counts_trim[is.na(norm_counts_trim)] <- 1
+  norm_counts_trim <- log2(norm_counts_trim)
+  colnames(norm_counts_trim) <- gsub("\\.", "-", colnames(norm_counts_trim))
+  ps_norm <- ps
+  otu_table(ps_norm) <- otu_table(norm_counts_trim, taxa_are_rows =  TRUE)
+  return(ps_norm)
+}
+
+ps_n <- wrench.norm.ps(ps)
+```
+
+### Multivariate analysis
+
+```r
+sampledf <- data.frame(sample_data(ps))
+dist.mat <- phyloseq::distance(ps, method = "wunifrac")
+dist.mat[dist.mat<0] <- 0
+perm <- how(nperm = 999,
+            blocks = sampledf$Block)
+set.seed(100)
+pmv <- adonis2(dist.mat ~ Soil, data = sampledf, permutations = perm)
+pmv
+
+pairwise.perm.manova(dist.mat, paste0(sampledf$Soil), nperm = 999, progress = TRUE, p.method = "fdr", F = T, R2 = T)
+
+cap_ord <- ordinate(physeq = ps, method = "NMDS", distance = dist.mat, formula = ~ 1)
+cap_plot <- plot_ordination(physeq = ps, ordination = cap_ord, axes = c(1,2)) +
+  theme_bw(base_size = 20) +
+  stat_ellipse(mapping = aes(color = Soil),
+               alpha = 0.4,
+               type = "norm",
+               show.legend=F) +
+  geom_point(mapping = aes(color = Soil, shape = Soil), size = 5) +
+  theme(legend.title= element_blank(), 
+        legend.background = element_rect(color = NA),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(color="black"),
+        axis.text.y = element_text(color="black"),
+        panel.grid = element_blank(),
+        legend.position = "none", legend.justification = c(0.99, 0.99),
+        legend.box.background = element_rect(colour = "black"),
+        legend.spacing.y = unit(0, "mm")) +
+  scale_color_manual(name = "Legend", values=c("#e41a1c", "#377eb8", "#4daf4a"), labels = c("Agricultural", "Margin", "Uncultivated"), breaks = c("Agricultural", "Margin", "Uncultivated")) +
+  scale_shape_manual(name = "Legend", values=c(19,17,15), labels = c("Agricultural", "Margin", "Uncultivated"), breaks = c("Agricultural", "Margin", "Uncultivated")) +
+  xlim(-0.4, 0.4) + ylim(-0.3, 0.3)
+```
+
+### Diversity
+
+```r
+div <- microbiome::alpha(ps)
+otus <- as.data.frame(t(otu_table(ps)))
+
+tree <- phy_tree(ps)
+div.pd <- pd(otus, tree, include.root = FALSE)
+
+mntd.calc <- function(ps){
+  comm <- as.data.frame(t(otu_table(ps)))
+  phy <- phy_tree(ps)
+  phy.dist <- cophenetic(phy)
+  comm.sesmpd <- ses.mntd(comm, phy.dist, null.model = "richness", abundance.weighted = T, runs = 999)
+  ks <- sample_data(ps)
+  bnti <- cbind(ks, comm.sesmpd)
+  return(bnti)
+}
+
+mntd.df <- mntd.calc(ps)
+
+div.2 <- cbind(sample_data(ps), div)
+div.2 <- cbind(div.2, div.pd, mntd.df$mntd.obs, -mntd.df$mntd.obs.z)
+colnames(div.2)[c(32,33)] <- c("mntd.obs", "mntd.obs.z")
+
+model <- lmer(diversity_shannon ~ Soil * (1|Block), data = div.2)
+Anova(model)
+
+model <- lmer(PD ~ Soil * (1|Block), data = div.2)
+Anova(model)
+
+model <- lmer(mntd.obs ~ Soil * (1|Block), data = div.2)
+Anova(model)
+ph <- emmeans(model, "Soil")
+pairs(ph)
+
+model <- lmer(mntd.obs.z ~ Soil * (1|Block), data = div.2)
+Anova(model)
+ph <- emmeans(model, "Soil")
+pairs(ph)
+
+div.plot.fun <- function(df, var, label, y1, y2){
+  plot <- ggplot(div.2, aes(x = Soil, y = get(var), fill = Soil)) +
+    theme_bw(base_size = 15) +
+    geom_boxplot(outlier.colour="black", notch=F, outlier.shape=NA) +
+    labs(y = label) +
+    theme(axis.title.x=element_blank(),
+          axis.text.x = element_text(color="black"),
+          axis.text.y = element_text(color="black"),
+          axis.title.y = element_text(color="black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          legend.position = "none") +
+    scale_fill_manual(name = "Legend", values=c("#e41a1c", "#377eb8", "#4daf4a"),
+                      labels = c("Agricultural", "Margin", "Uncultivated"),
+                      breaks = c("Agricultural", "Margin", "Uncultivated")) +
+    ylim(y1, y2)
+  return(plot)
+}
+
+plot1 <- div.plot.fun(div.2, "diversity_shannon", "Shannon diversity", 1.5, 4)
+plot2 <- div.plot.fun(div.2, "PD", "Phylogenetic diversity", 0, 70)
+plot3 <- div.plot.fun(div.2, "mntd.obs", "MNTD", 0, 1)
+plot4 <- div.plot.fun(div.2, "mntd.obs.z", "beta-NTI", -2, 2)
+```
+
+### Taxa plot (relative abundance)
+
+```r
+glom <- microbiome::aggregate_taxa(ps_n, "Genus")
+glom <- microbiome::transform(glom, "compositional")
+dat <- psmelt(glom)
+filt.gen <- dat %>% group_by(Genus) %>% summarize(mean = mean(Abundance)) %>% filter(mean <= 0.01)
+dat <- subset(dat, !(Genus %in% filt.gen$Genus))
+dat <- dat %>% group_by(Soil, Genus) %>% summarize(cs = mean(Abundance)) %>% mutate(cs = cs/sum(cs)) %>% mutate(Genus = replace(Genus, Genus == "", "unidentified taxa"))
+nb.cols <- length(unique(dat$Genus))
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
+
+taxa_plot <- ggplot(dat, aes(x = as.factor(Soil), y = cs, fill = Genus)) +
+  theme_bw(base_size = 14) +
+  geom_bar(stat="identity") +
+  theme(legend.background = element_rect(fill="white"),
+        legend.key = element_rect(fill="transparent"),
+        legend.text = element_text(size = 12, face = "italic"),
+        axis.text.x = element_text(color="black"),
+        axis.text.y = element_text(color="black"),
+        panel.grid = element_blank()) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = mycolors) +
+  labs(y = "relative abundance", x="")
+```
+
+```r
 
 ```
 
+```r
+
+```
+
+```r
+
+```
+
+```r
+
+```
+
+```r
+
+```
+
+```r
+
+```
+
+```r
+
+```
+
+```r
+
+```
