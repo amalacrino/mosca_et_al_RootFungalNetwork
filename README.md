@@ -24,7 +24,7 @@ nextflow run nf-core/ampliseq -r 2.7.1 -profile singularity \
 --FW_primer "CTTGGTCATTTAGAGGAAGTAA" \
 --RV_primer "GCTGCGTTCTTCATCGATG" \
 --outdir $OUTDIR \
---extension "/*_{1,2}.fastq.gz" \
+--extension "/*_R{1,2}.fastq.gz" \
 --illumina_pe_its \
 --dada_ref_tax_custom $taxDB/sh_general_release_dynamic_04.04.2024.fasta \
 --skip_dada_addspecies \
