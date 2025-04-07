@@ -6,13 +6,13 @@
 
 # Disclaimer
 
-This repository contains the main components used to process the raw data and to analyze it. Raw data is available at NCBI SRA under the BioProject number `PRJNA1080585`.
+This repository contains the main components used to process the raw data and to analyze it. Raw data is available at NCBI SRA under the BioProject number `PRJNA-XXXXXXXX` (soon available). Pre-processed data using `nf-core/ampliseq` is available inside the folder `data`.
 
 Our pipeline included:
-* nf-core/ampliseq v2.7.1 [https://github.com/nf-core/ampliseq/](https://github.com/nf-core/ampliseq/)
-* MAFFT [https://academic.oup.com/nar/article/30/14/3059/2904316](https://academic.oup.com/nar/article/30/14/3059/2904316)
-* FastTree [https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0009490](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0009490)
-* R v4.4.1 [https://www.R-project.org/](https://www.R-project.org/)
+* `nf-core/ampliseq` v2.7.1 [https://github.com/nf-core/ampliseq/](https://github.com/nf-core/ampliseq/)
+* `MAFFT` [https://academic.oup.com/nar/article/30/14/3059/2904316](https://academic.oup.com/nar/article/30/14/3059/2904316)
+* `FastTree` [https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0009490](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0009490)
+* `R` v4.4.1 [https://www.R-project.org/](https://www.R-project.org/)
 
 # Data processing
 
