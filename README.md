@@ -121,7 +121,7 @@ library("iCAMP")
 load(file = 'data/data.rds')
 
 remove.cont <- function(ps){
-  sample_data(ps)$is.neg <- sample_data(ps)$Treatment == "DNA_extraction"
+  sample_data(ps)$is.neg <- sample_data(ps)$Treatment == "Control"
   contamdf.prev <- isContaminant(ps, method="prevalence", neg="is.neg", threshold = 0.05)
   cont.remove <- subset(contamdf.prev, contaminant == "TRUE")
   cont.remove <- row.names(cont.remove)
