@@ -131,6 +131,7 @@ remove.cont <- function(ps){
 }
 
 ps <- remove.cont(ps)
+ps <- phyloseq::subset_samples(ps, Compartment == "Roots")
 ps <- filter_taxa(ps, function (x) {sum(x > 0) > 1}, prune=TRUE)
 ps <- prune_samples(sample_sums(ps) >= 1000, ps)
 
