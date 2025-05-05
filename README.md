@@ -2,7 +2,11 @@
 
 **Saveria Mosca, Edda Francomano, Meriem Miyassa Aci, Nesma Zakaria Mohamed, Leonardo Schena, Antonino Malacrinò**
 
+Preprint on _bioRxiv_: [10.1101/2025.04.27.650865](https://doi.org/10.1101/2025.04.27.650865)
+
 ## Abstract
+
+Despite the critical role of soil microbiomes in ecosystem stability, how soil disturbance impacts these communities and their interactions with plants remains poorly understood. In this study, we investigate how different levels of soil disturbance influence the assembly and robustness of the root fungal microbiome. Using a microcosm experiment, we inoculated plants with soil from environments with decreasing levels of disturbance — agricultural field, field margin, and uncultivated field — and tested the variation in composition, assembly process, and network stability of the root fungal microbiome. Our results reveal that more disturbed systems, i.e. agricultural soils, harbor microbiomes with less robust networks compared to systems with lower disturbance. Network analysis identified arbuscular mycorrhizal fungi as key taxa contributing to microbiome stability, suggesting their critical role in maintaining the robustness of root-associated fungal microbiomes. Furthermore, stochastic processes dominated fungal community assembly across all soil treatments, yet the key taxa that deviated from null-model predictions include those with a major role in network robustness, and were mainly identified as arbuscular mycorrhizal fungi. Together, our results suggest that arbuscular mycorrhizal fungi are major actors in assembling robust plant microbiomes, and soil disturbance is a key factor in disrupting these interactions.
 
 # Disclaimer
 
